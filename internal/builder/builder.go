@@ -16,8 +16,9 @@ type errListener struct {
 	bag *diag.Bag
 }
 
-func (l *errListener) SyntaxError(_ antlr.Recognizer, _ interface{},
-	line, col int, msg string, _ antlr.RecognitionException) {
+func (l *errListener) SyntaxError(_ antlr.Recognizer, _ any,
+	line, col int, msg string, _ antlr.RecognitionException,
+) {
 	l.bag.Add(diag.Error{Line: line, Col: col, Level: diag.Syntax, Msg: msg})
 }
 
@@ -97,13 +98,8 @@ func buildFunc(ctx gen.IFuncDeclContext) *ast.FuncDecl {
 		}
 	}
 	if rs := ctx.ReturnSpec(); rs != nil {
-		switch r := rs.(type) {
-		case *gen.SingleReturnSpecContext:
-			f.ReturnTypes = []string{r.Type_().GetText()}
-		case *gen.MultiReturnSpecContext:
-			for _, t := range r.AllType_() {
-				f.ReturnTypes = append(f.ReturnTypes, t.GetText())
-			}
+		for _, t := range rs.AllType_() {
+			f.ReturnTypes = append(f.ReturnTypes, t.GetText())
 		}
 	}
 	for _, st := range ctx.Block().AllStatement() {
@@ -163,11 +159,11 @@ func buildIf(ctx gen.IIfStmtContext) ast.Stmt {
 		Col:  ctx.GetStart().GetColumn(),
 	}
 	if ep := ctx.ElsePart(); ep != nil {
-		switch e := ep.(type) {
-		case *gen.ElseIfContext:
-			s.Else = buildIf(e.IfStmt())
-		case *gen.ElseBlockContext:
-			s.Else = buildBlock(e.Block())
+		switch {
+		case ep.IfStmt() != nil:
+			s.Else = buildIf(ep.IfStmt())
+		case ep.Block() != nil:
+			s.Else = buildBlock(ep.Block())
 		default:
 			panic("buildIf: неизвестная форма else")
 		}
