@@ -1,0 +1,4 @@
+package main
+func main() {
+  fmt.Println(1 + 2.0);
+}

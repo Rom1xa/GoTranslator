@@ -1,0 +1,8 @@
+/goterp
+/bin/
+*.exe
+
+*.test
+*.out.tmp
+
+*.jar
