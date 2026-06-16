@@ -31,6 +31,29 @@ type Bool bool
 func (b Bool) String() string { return strconv.FormatBool(bool(b)) }
 func (b Bool) Native() any    { return bool(b) }
 
+type Interface struct {
+	TypeName string
+	Value    Value
+}
+
+func NewInterface(typeName string, v Value) *Interface {
+	return &Interface{TypeName: typeName, Value: v}
+}
+
+func (i *Interface) String() string {
+	if i.Value == nil {
+		return "<nil>"
+	}
+	return i.Value.String()
+}
+
+func (i *Interface) Native() any {
+	if i.Value == nil {
+		return nil
+	}
+	return i.Value.Native()
+}
+
 // Struct — значение типа struct.
 type Struct struct {
 	TypeName string

@@ -23,7 +23,15 @@ func (v *BaseGoSubsetVisitor) VisitTypeDecl(ctx *TypeDeclContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
+func (v *BaseGoSubsetVisitor) VisitTypeDef(ctx *TypeDefContext) interface{} {
+	return v.VisitChildren(ctx)
+}
+
 func (v *BaseGoSubsetVisitor) VisitFieldDecl(ctx *FieldDeclContext) interface{} {
+	return v.VisitChildren(ctx)
+}
+
+func (v *BaseGoSubsetVisitor) VisitMethodDecl(ctx *MethodDeclContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
@@ -136,6 +144,10 @@ func (v *BaseGoSubsetVisitor) VisitFieldInit(ctx *FieldInitContext) interface{} 
 }
 
 func (v *BaseGoSubsetVisitor) VisitPrintStmt(ctx *PrintStmtContext) interface{} {
+	return v.VisitChildren(ctx)
+}
+
+func (v *BaseGoSubsetVisitor) VisitGoStmt(ctx *GoStmtContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 

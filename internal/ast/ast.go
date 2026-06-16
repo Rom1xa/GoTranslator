@@ -10,10 +10,22 @@ type StructType struct {
 	Fields []FieldDecl
 }
 
+type MethodDecl struct {
+	Name        string
+	Params      []Param
+	ReturnTypes []string
+}
+
+type InterfaceType struct {
+	Name    string
+	Methods []MethodDecl
+}
+
 type Program struct {
-	Package string
-	Types   []*StructType
-	Funcs   []*FuncDecl
+	Package    string
+	Types      []*StructType
+	Interfaces []*InterfaceType
+	Funcs      []*FuncDecl
 }
 
 type Param struct {
@@ -39,6 +51,17 @@ type PrintStmt struct {
 }
 
 func (*PrintStmt) stmtNode() {}
+
+// GoStmt: go foo(args...) или go fmt.Println/Printf(args...).
+type GoStmt struct {
+	Name    string
+	PrintFn string
+	Args    []Expr
+	Line    int
+	Col     int
+}
+
+func (*GoStmt) stmtNode() {}
 
 // VarDecl: var Name Type [= Init]
 type VarDecl struct {
@@ -71,8 +94,10 @@ func (*AssignStmt) stmtNode()   {}
 
 type Expr interface{ exprNode() }
 
-type StringLit struct{ Value string }
-type IntLit struct{ Value int64 }
+type (
+	StringLit struct{ Value string }
+	IntLit    struct{ Value int64 }
+)
 
 func (*StringLit) exprNode() {}
 func (*IntLit) exprNode()    {}
@@ -100,8 +125,10 @@ type UnaryExpr struct {
 	Col     int
 }
 
-type FloatLit struct{ Value float64 }
-type BoolLit struct{ Value bool }
+type (
+	FloatLit struct{ Value float64 }
+	BoolLit  struct{ Value bool }
+)
 
 func (*Ident) exprNode()      {}
 func (*BinaryExpr) exprNode() {}

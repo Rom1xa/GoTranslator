@@ -19,8 +19,14 @@ type GoSubsetListener interface {
 	// EnterTypeDecl is called when entering the typeDecl production.
 	EnterTypeDecl(c *TypeDeclContext)
 
+	// EnterTypeDef is called when entering the typeDef production.
+	EnterTypeDef(c *TypeDefContext)
+
 	// EnterFieldDecl is called when entering the fieldDecl production.
 	EnterFieldDecl(c *FieldDeclContext)
+
+	// EnterMethodDecl is called when entering the methodDecl production.
+	EnterMethodDecl(c *MethodDeclContext)
 
 	// EnterParamList is called when entering the paramList production.
 	EnterParamList(c *ParamListContext)
@@ -106,6 +112,9 @@ type GoSubsetListener interface {
 	// EnterPrintStmt is called when entering the printStmt production.
 	EnterPrintStmt(c *PrintStmtContext)
 
+	// EnterGoStmt is called when entering the goStmt production.
+	EnterGoStmt(c *GoStmtContext)
+
 	// EnterExprList is called when entering the exprList production.
 	EnterExprList(c *ExprListContext)
 
@@ -178,8 +187,14 @@ type GoSubsetListener interface {
 	// ExitTypeDecl is called when exiting the typeDecl production.
 	ExitTypeDecl(c *TypeDeclContext)
 
+	// ExitTypeDef is called when exiting the typeDef production.
+	ExitTypeDef(c *TypeDefContext)
+
 	// ExitFieldDecl is called when exiting the fieldDecl production.
 	ExitFieldDecl(c *FieldDeclContext)
+
+	// ExitMethodDecl is called when exiting the methodDecl production.
+	ExitMethodDecl(c *MethodDeclContext)
 
 	// ExitParamList is called when exiting the paramList production.
 	ExitParamList(c *ParamListContext)
@@ -264,6 +279,9 @@ type GoSubsetListener interface {
 
 	// ExitPrintStmt is called when exiting the printStmt production.
 	ExitPrintStmt(c *PrintStmtContext)
+
+	// ExitGoStmt is called when exiting the goStmt production.
+	ExitGoStmt(c *GoStmtContext)
 
 	// ExitExprList is called when exiting the exprList production.
 	ExitExprList(c *ExprListContext)

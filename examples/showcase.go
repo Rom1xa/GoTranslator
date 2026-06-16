@@ -7,6 +7,9 @@ type Point struct {
   y int;
 }
 
+type Any interface {
+}
+
 func makePoint(x int, y int) Point {
   return Point{x: x, y: y};
 }
@@ -37,6 +40,10 @@ func sumSlice(nums []int) int {
     _ := i;
   }
   return total;
+}
+
+func asyncPrint(label string, value int) {
+  fmt.Printf("%s: %d\n", label, value);
 }
 
 func main() {
@@ -104,4 +111,16 @@ func main() {
   for i, p := range points {
     fmt.Printf("points[%d] = (%d, %d)\n", i, p.x, p.y);
   }
+
+  // 9. Интерфейсы
+  var any Any = 123;
+  fmt.Println("interface int =", any);
+  any = "dynamic string";
+  fmt.Println("interface string =", any);
+  any = true;
+  fmt.Println("interface bool =", any);
+
+  // 10. Горутины
+  go asyncPrint("goroutine fib(6)", fib(6));
+  go fmt.Println("goroutine print");
 }

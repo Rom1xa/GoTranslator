@@ -19,8 +19,14 @@ type GoSubsetVisitor interface {
 	// Visit a parse tree produced by GoSubsetParser#typeDecl.
 	VisitTypeDecl(ctx *TypeDeclContext) interface{}
 
+	// Visit a parse tree produced by GoSubsetParser#typeDef.
+	VisitTypeDef(ctx *TypeDefContext) interface{}
+
 	// Visit a parse tree produced by GoSubsetParser#fieldDecl.
 	VisitFieldDecl(ctx *FieldDeclContext) interface{}
+
+	// Visit a parse tree produced by GoSubsetParser#methodDecl.
+	VisitMethodDecl(ctx *MethodDeclContext) interface{}
 
 	// Visit a parse tree produced by GoSubsetParser#paramList.
 	VisitParamList(ctx *ParamListContext) interface{}
@@ -105,6 +111,9 @@ type GoSubsetVisitor interface {
 
 	// Visit a parse tree produced by GoSubsetParser#printStmt.
 	VisitPrintStmt(ctx *PrintStmtContext) interface{}
+
+	// Visit a parse tree produced by GoSubsetParser#goStmt.
+	VisitGoStmt(ctx *GoStmtContext) interface{}
 
 	// Visit a parse tree produced by GoSubsetParser#exprList.
 	VisitExprList(ctx *ExprListContext) interface{}

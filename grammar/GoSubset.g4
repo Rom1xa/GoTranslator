@@ -6,8 +6,12 @@ topLevel : funcDecl
          ;
 
 funcDecl  : 'func' IDENT '(' paramList? ')' returnSpec? block ;
-typeDecl  : 'type' IDENT 'struct' '{' fieldDecl* '}' ;
+typeDecl  : 'type' IDENT typeDef ;
+typeDef   : 'struct' '{' fieldDecl* '}'
+          | 'interface' '{' methodDecl* '}'
+          ;
 fieldDecl : IDENT type ';' ;
+methodDecl: IDENT '(' paramList? ')' returnSpec? ';' ;
 paramList : param (',' param)* ;
 param     : IDENT type ;
 returnSpec : type
@@ -17,6 +21,7 @@ returnSpec : type
 block : '{' statement* '}' ;
 
 statement : varDecl
+          | goStmt
           | multiShortDecl
           | shortVarDecl
           | fieldAssignStmt
@@ -68,6 +73,7 @@ fieldInitList : fieldInit (',' fieldInit)* ;
 fieldInit     : IDENT ':' expr ;
 
 printStmt : 'fmt' '.' ( 'Println' | 'Printf' ) '(' exprList? ')' ';' ;
+goStmt    : 'go' ( IDENT '(' exprList? ')' | 'fmt' '.' ( 'Println' | 'Printf' ) '(' exprList? ')' ) ';' ;
 exprList  : expr ( ',' expr )* ;
 
 expr

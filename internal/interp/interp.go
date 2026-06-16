@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/rom1xa/kyrsoTranslatorGo/internal/ast"
 	"github.com/rom1xa/kyrsoTranslatorGo/internal/diag"
@@ -64,18 +65,29 @@ func (s *scope) hasLocal(name string) bool          { _, ok := s.vars[name]; ret
 func (s *scope) declare(name string, v value.Value) { s.vars[name] = v }
 
 type Interp struct {
-	out   io.Writer
-	cur   *scope
-	funcs map[string]*ast.FuncDecl
-	types map[string]*ast.StructType
+	out        io.Writer
+	cur        *scope
+	funcs      map[string]*ast.FuncDecl
+	types      map[string]*ast.StructType
+	interfaces map[string]*ast.InterfaceType
+	async      *asyncState
+}
+
+type asyncState struct {
+	wg    sync.WaitGroup
+	mu    sync.Mutex
+	outMu sync.Mutex
+	err   error
 }
 
 func New(out io.Writer) *Interp {
 	return &Interp{
-		out:   out,
-		cur:   newScope(nil),
-		funcs: map[string]*ast.FuncDecl{},
-		types: map[string]*ast.StructType{},
+		out:        out,
+		cur:        newScope(nil),
+		funcs:      map[string]*ast.FuncDecl{},
+		types:      map[string]*ast.StructType{},
+		interfaces: map[string]*ast.InterfaceType{},
+		async:      &asyncState{},
 	}
 }
 
@@ -87,6 +99,9 @@ func (i *Interp) Run(p *ast.Program) error {
 	for _, t := range p.Types {
 		i.types[t.Name] = t
 	}
+	for _, t := range p.Interfaces {
+		i.interfaces[t.Name] = t
+	}
 	for _, f := range p.Funcs {
 		i.funcs[f.Name] = f
 	}
@@ -95,14 +110,21 @@ func (i *Interp) Run(p *ast.Program) error {
 		return diag.Error{Level: diag.Semantic, Msg: "функция main не найдена"}
 	}
 	_, err := i.callFunc(main, nil, 0, 0)
-	return err
+	i.async.wg.Wait()
+	if err != nil {
+		return err
+	}
+	i.async.mu.Lock()
+	defer i.async.mu.Unlock()
+	return i.async.err
 }
 
 func (i *Interp) callFunc(fn *ast.FuncDecl, args []value.Value, line, col int) ([]value.Value, error) {
 	if len(args) != len(fn.Params) {
 		return nil, semErr(line, col, fmt.Sprintf(
 			"функция %s: ожидалось %d аргументов, получено %d",
-			fn.Name, len(fn.Params), len(args)))
+			fn.Name, len(fn.Params), len(args),
+		))
 	}
 
 	saved := i.cur
@@ -110,19 +132,20 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []value.Value, line, col int) (
 	defer func() { i.cur = saved }()
 
 	for k, p := range fn.Params {
-		if !typeMatches(p.Type, args[k]) {
+		if !i.typeMatches(p.Type, args[k]) {
 			return nil, semErr(line, col, fmt.Sprintf(
 				"параметр %s: ожидался %s, получено %s",
-				p.Name, p.Type, typeNameOf(args[k])))
+				p.Name, p.Type, typeNameOf(args[k]),
+			))
 		}
-		i.cur.declare(p.Name, args[k])
+		i.cur.declare(p.Name, i.wrapForType(p.Type, args[k]))
 	}
 
 	for _, st := range fn.Body {
 		if err := i.execStmt(st); err != nil {
 			var ret errReturn
 			if errors.As(err, &ret) {
-				if err2 := checkReturn(fn, ret, line, col); err2 != nil {
+				if err2 := i.checkReturn(fn, ret, line, col); err2 != nil {
 					return nil, err2
 				}
 				return ret.values, nil
@@ -136,23 +159,27 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []value.Value, line, col int) (
 
 	if len(fn.ReturnTypes) > 0 {
 		return nil, semErr(line, col, fmt.Sprintf(
-			"функция %s: не все пути возвращают значение", fn.Name))
+			"функция %s: не все пути возвращают значение", fn.Name,
+		))
 	}
 	return nil, nil
 }
 
-func checkReturn(fn *ast.FuncDecl, ret errReturn, line, col int) error {
+func (i *Interp) checkReturn(fn *ast.FuncDecl, ret errReturn, line, col int) error {
 	if len(ret.values) != len(fn.ReturnTypes) {
 		return semErr(line, col, fmt.Sprintf(
 			"функция %s: ожидается %d возвращаемых значений, получено %d",
-			fn.Name, len(fn.ReturnTypes), len(ret.values)))
+			fn.Name, len(fn.ReturnTypes), len(ret.values),
+		))
 	}
 	for k, t := range fn.ReturnTypes {
-		if !typeMatches(t, ret.values[k]) {
+		if !i.typeMatches(t, ret.values[k]) {
 			return semErr(line, col, fmt.Sprintf(
 				"функция %s: возврат %d: ожидался %s, получено %s",
-				fn.Name, k+1, t, typeNameOf(ret.values[k])))
+				fn.Name, k+1, t, typeNameOf(ret.values[k]),
+			))
 		}
+		ret.values[k] = i.wrapForType(t, ret.values[k])
 	}
 	return nil
 }
@@ -180,12 +207,14 @@ func (i *Interp) execStmt(s ast.Stmt) error {
 		if err != nil {
 			return err
 		}
-		if !typeMatches(typeNameOf(old), v) {
+		targetType := typeNameOf(old)
+		if !i.typeMatches(targetType, v) {
 			return semErr(st.Line, st.Col, fmt.Sprintf(
 				"несоответствие типов при присваивании %s: %s = %s",
-				st.Name, typeNameOf(old), typeNameOf(v)))
+				st.Name, targetType, typeNameOf(v),
+			))
 		}
-		if !i.cur.setExisting(st.Name, v) {
+		if !i.cur.setExisting(st.Name, i.wrapForType(targetType, v)) {
 			return semErr(st.Line, st.Col, "undefined: "+st.Name)
 		}
 		return nil
@@ -207,6 +236,8 @@ func (i *Interp) execStmt(s ast.Stmt) error {
 		return i.execMultiShortDecl(st)
 	case *ast.PrintStmt:
 		return i.execPrint(st)
+	case *ast.GoStmt:
+		return i.execGo(st)
 	case *ast.FieldAssignStmt:
 		return i.execFieldAssign(st)
 	case *ast.IndexAssignStmt:
@@ -234,11 +265,13 @@ func (i *Interp) execVarDecl(vd *ast.VarDecl) error {
 	if err != nil {
 		return err
 	}
-	if !typeMatches(vd.Type, v) {
-		return diag.Error{Line: vd.Line, Col: vd.Col, Level: diag.Semantic,
-			Msg: fmt.Sprintf("несоответствие типов: %s = %s", vd.Type, typeNameOf(v))}
+	if !i.typeMatches(vd.Type, v) {
+		return diag.Error{
+			Line: vd.Line, Col: vd.Col, Level: diag.Semantic,
+			Msg: fmt.Sprintf("несоответствие типов: %s = %s", vd.Type, typeNameOf(v)),
+		}
 	}
-	i.cur.declare(vd.Name, v)
+	i.cur.declare(vd.Name, i.wrapForType(vd.Type, v))
 	return nil
 }
 
@@ -331,6 +364,9 @@ func (i *Interp) zeroValue(t string, line, col int) (value.Value, error) {
 	case "bool":
 		return value.Bool(false), nil
 	default:
+		if _, ok := i.interfaces[t]; ok {
+			return value.NewInterface(t, nil), nil
+		}
 		if strings.HasPrefix(t, "[]") {
 			return value.NewSlice(t[2:]), nil
 		}
@@ -360,6 +396,8 @@ func typeNameOf(v value.Value) string {
 		return "string"
 	case value.Bool:
 		return "bool"
+	case *value.Interface:
+		return n.TypeName
 	case *value.Struct:
 		return n.TypeName
 	case *value.Slice:
@@ -368,7 +406,19 @@ func typeNameOf(v value.Value) string {
 	return "unknown"
 }
 
-func typeMatches(t string, v value.Value) bool {
+func (i *Interp) typeMatches(t string, v value.Value) bool {
+	if iv, ok := v.(*value.Interface); ok {
+		if iv.Value == nil {
+			return t == iv.TypeName
+		}
+		if t == iv.TypeName {
+			return true
+		}
+		v = iv.Value
+	}
+	if i.isInterfaceType(t) {
+		return true
+	}
 	switch n := v.(type) {
 	case value.Int:
 		return t == "int"
@@ -386,6 +436,28 @@ func typeMatches(t string, v value.Value) bool {
 	return false
 }
 
+func (i *Interp) isInterfaceType(t string) bool {
+	_, ok := i.interfaces[t]
+	return ok
+}
+
+func (i *Interp) wrapForType(t string, v value.Value) value.Value {
+	if iv, ok := v.(*value.Interface); ok && iv.TypeName == t {
+		return iv
+	}
+	if i.isInterfaceType(t) {
+		return value.NewInterface(t, unwrapInterface(v))
+	}
+	return v
+}
+
+func unwrapInterface(v value.Value) value.Value {
+	if iv, ok := v.(*value.Interface); ok {
+		return iv.Value
+	}
+	return v
+}
+
 func (i *Interp) execPrint(ps *ast.PrintStmt) error {
 	args := make([]any, 0, len(ps.Args))
 	for _, e := range ps.Args {
@@ -395,21 +467,89 @@ func (i *Interp) execPrint(ps *ast.PrintStmt) error {
 		}
 		args = append(args, v.Native())
 	}
+	i.async.outMu.Lock()
+	defer i.async.outMu.Unlock()
 	if ps.Fn == "Printf" {
 		if len(args) == 0 {
-			return diag.Error{Line: ps.Line, Col: ps.Col, Level: diag.Semantic,
-				Msg: "Printf требует строку формата"}
+			return diag.Error{
+				Line: ps.Line, Col: ps.Col, Level: diag.Semantic,
+				Msg: "Printf требует строку формата",
+			}
 		}
 		format, ok := args[0].(string)
 		if !ok {
-			return diag.Error{Line: ps.Line, Col: ps.Col, Level: diag.Semantic,
-				Msg: "первый аргумент Printf должен быть строкой"}
+			return diag.Error{
+				Line: ps.Line, Col: ps.Col, Level: diag.Semantic,
+				Msg: "первый аргумент Printf должен быть строкой",
+			}
 		}
 		fmt.Fprintf(i.out, format, args[1:]...)
 		return nil
 	}
 	fmt.Fprintln(i.out, args...)
 	return nil
+}
+
+func (i *Interp) execGo(gs *ast.GoStmt) error {
+	args, err := i.evalArgs(gs.Args, gs.Line, gs.Col)
+	if err != nil {
+		return err
+	}
+	if gs.PrintFn != "" {
+		i.async.wg.Add(1)
+		go func() {
+			defer i.async.wg.Done()
+			i.async.outMu.Lock()
+			defer i.async.outMu.Unlock()
+			native := make([]any, 0, len(args))
+			for _, v := range args {
+				native = append(native, v.Native())
+			}
+			if gs.PrintFn == "Printf" {
+				if len(native) == 0 {
+					i.setAsyncErr(diag.Error{Line: gs.Line, Col: gs.Col, Level: diag.Semantic, Msg: "Printf требует строку формата"})
+					return
+				}
+				format, ok := native[0].(string)
+				if !ok {
+					i.setAsyncErr(diag.Error{Line: gs.Line, Col: gs.Col, Level: diag.Semantic, Msg: "первый аргумент Printf должен быть строкой"})
+					return
+				}
+				fmt.Fprintf(i.out, format, native[1:]...)
+				return
+			}
+			fmt.Fprintln(i.out, native...)
+		}()
+		return nil
+	}
+	fn, ok := i.funcs[gs.Name]
+	if !ok {
+		return semErr(gs.Line, gs.Col, "undefined function: "+gs.Name)
+	}
+	i.async.wg.Add(1)
+	go func() {
+		defer i.async.wg.Done()
+		child := &Interp{
+			out:        i.out,
+			cur:        newScope(nil),
+			funcs:      i.funcs,
+			types:      i.types,
+			interfaces: i.interfaces,
+			async:      i.async,
+		}
+		if _, err := child.callFunc(fn, args, gs.Line, gs.Col); err != nil {
+			child.setAsyncErr(err)
+		}
+	}()
+	return nil
+}
+
+func (i *Interp) setAsyncErr(err error) {
+	i.async.mu.Lock()
+	defer i.async.mu.Unlock()
+	if i.async.err == nil {
+		i.async.err = err
+	}
 }
 
 func (i *Interp) execReturn(rs *ast.ReturnStmt) error {
@@ -457,7 +597,8 @@ func (i *Interp) execMultiShortDecl(ms *ast.MultiShortVarDecl) error {
 	}
 	if len(results) != len(ms.Names) {
 		return semErr(ms.Line, ms.Col, fmt.Sprintf(
-			"функция возвращает %d значений, ожидается %d", len(results), len(ms.Names)))
+			"функция возвращает %d значений, ожидается %d", len(results), len(ms.Names),
+		))
 	}
 	for k, name := range ms.Names {
 		if i.cur.hasLocal(name) {
@@ -502,7 +643,8 @@ func (i *Interp) evalCall(ex *ast.CallExpr) (value.Value, error) {
 	if len(results) != 1 {
 		return nil, semErr(ex.Line, ex.Col, fmt.Sprintf(
 			"функция %s возвращает %d значений в контексте одного значения",
-			ex.Name, len(results)))
+			ex.Name, len(results),
+		))
 	}
 	return results[0], nil
 }
@@ -738,10 +880,11 @@ func (i *Interp) evalStructLit(sl *ast.StructLit) (value.Value, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !typeMatches(declType, v) {
+		if !i.typeMatches(declType, v) {
 			return nil, semErr(sl.Line, sl.Col, fmt.Sprintf(
 				"поле %s.%s: ожидался %s, получено %s",
-				sl.TypeName, fi.Name, declType, typeNameOf(v)))
+				sl.TypeName, fi.Name, declType, typeNameOf(v),
+			))
 		}
 		s.Set(fi.Name, v)
 	}
@@ -773,9 +916,10 @@ func (i *Interp) evalSliceLit(sl *ast.SliceLit) (value.Value, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !typeMatches(sl.ElemType, v) {
+		if !i.typeMatches(sl.ElemType, v) {
 			return nil, semErr(sl.Line, sl.Col, fmt.Sprintf(
-				"элемент среза: ожидался %s, получено %s", sl.ElemType, typeNameOf(v)))
+				"элемент среза: ожидался %s, получено %s", sl.ElemType, typeNameOf(v),
+			))
 		}
 		s.AppendInPlace(v)
 	}
@@ -800,19 +944,22 @@ func (i *Interp) evalIndex(ex *ast.IndexExpr) (value.Value, error) {
 	case *value.Slice:
 		if n < 0 || n >= int64(sv.Len()) {
 			return nil, rtErr(ex.Line, ex.Col, fmt.Sprintf(
-				"индекс %d выходит за пределы среза длиной %d", n, sv.Len()))
+				"индекс %d выходит за пределы среза длиной %d", n, sv.Len(),
+			))
 		}
 		return sv.Get(int(n)), nil
 	case value.String:
 		s := string(sv)
 		if n < 0 || n >= int64(len(s)) {
 			return nil, rtErr(ex.Line, ex.Col, fmt.Sprintf(
-				"индекс %d выходит за пределы строки длиной %d", n, len(s)))
+				"индекс %d выходит за пределы строки длиной %d", n, len(s),
+			))
 		}
 		return value.Int(int64(s[n])), nil
 	}
 	return nil, semErr(ex.Line, ex.Col, fmt.Sprintf(
-		"индексирование неприменимо к %s", typeNameOf(obj)))
+		"индексирование неприменимо к %s", typeNameOf(obj),
+	))
 }
 
 func (i *Interp) execIndexAssign(ia *ast.IndexAssignStmt) error {
@@ -835,15 +982,17 @@ func (i *Interp) execIndexAssign(ia *ast.IndexAssignStmt) error {
 	n := int64(idxInt)
 	if n < 0 || n >= int64(sl.Len()) {
 		return rtErr(ia.Line, ia.Col, fmt.Sprintf(
-			"индекс %d выходит за пределы среза длиной %d", n, sl.Len()))
+			"индекс %d выходит за пределы среза длиной %d", n, sl.Len(),
+		))
 	}
 	val, err := i.eval(ia.Value)
 	if err != nil {
 		return err
 	}
-	if !typeMatches(sl.ElemType, val) {
+	if !i.typeMatches(sl.ElemType, val) {
 		return semErr(ia.Line, ia.Col, fmt.Sprintf(
-			"элемент среза: ожидался %s, получено %s", sl.ElemType, typeNameOf(val)))
+			"элемент среза: ожидался %s, получено %s", sl.ElemType, typeNameOf(val),
+		))
 	}
 	sl.Set(int(n), val)
 	return nil
@@ -914,9 +1063,10 @@ func (i *Interp) evalBuiltinAppend(ex *ast.CallExpr) (value.Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !typeMatches(sl.ElemType, val) {
+	if !i.typeMatches(sl.ElemType, val) {
 		return nil, semErr(ex.Line, ex.Col, fmt.Sprintf(
-			"append: тип элемента %s, получено %s", sl.ElemType, typeNameOf(val)))
+			"append: тип элемента %s, получено %s", sl.ElemType, typeNameOf(val),
+		))
 	}
 	return sl.Append(val), nil
 }
@@ -952,10 +1102,11 @@ func (i *Interp) execFieldAssign(fa *ast.FieldAssignStmt) error {
 	if err != nil {
 		return err
 	}
-	if !typeMatches(declType, v) {
+	if !i.typeMatches(declType, v) {
 		return semErr(fa.Line, fa.Col, fmt.Sprintf(
 			"поле %s.%s: ожидался %s, получено %s",
-			s.TypeName, fa.Field, declType, typeNameOf(v)))
+			s.TypeName, fa.Field, declType, typeNameOf(v),
+		))
 	}
 	s.Set(fa.Field, v)
 	return nil

@@ -44,11 +44,23 @@ func (s *BaseGoSubsetListener) EnterTypeDecl(ctx *TypeDeclContext) {}
 // ExitTypeDecl is called when production typeDecl is exited.
 func (s *BaseGoSubsetListener) ExitTypeDecl(ctx *TypeDeclContext) {}
 
+// EnterTypeDef is called when production typeDef is entered.
+func (s *BaseGoSubsetListener) EnterTypeDef(ctx *TypeDefContext) {}
+
+// ExitTypeDef is called when production typeDef is exited.
+func (s *BaseGoSubsetListener) ExitTypeDef(ctx *TypeDefContext) {}
+
 // EnterFieldDecl is called when production fieldDecl is entered.
 func (s *BaseGoSubsetListener) EnterFieldDecl(ctx *FieldDeclContext) {}
 
 // ExitFieldDecl is called when production fieldDecl is exited.
 func (s *BaseGoSubsetListener) ExitFieldDecl(ctx *FieldDeclContext) {}
+
+// EnterMethodDecl is called when production methodDecl is entered.
+func (s *BaseGoSubsetListener) EnterMethodDecl(ctx *MethodDeclContext) {}
+
+// ExitMethodDecl is called when production methodDecl is exited.
+func (s *BaseGoSubsetListener) ExitMethodDecl(ctx *MethodDeclContext) {}
 
 // EnterParamList is called when production paramList is entered.
 func (s *BaseGoSubsetListener) EnterParamList(ctx *ParamListContext) {}
@@ -217,6 +229,12 @@ func (s *BaseGoSubsetListener) EnterPrintStmt(ctx *PrintStmtContext) {}
 
 // ExitPrintStmt is called when production printStmt is exited.
 func (s *BaseGoSubsetListener) ExitPrintStmt(ctx *PrintStmtContext) {}
+
+// EnterGoStmt is called when production goStmt is entered.
+func (s *BaseGoSubsetListener) EnterGoStmt(ctx *GoStmtContext) {}
+
+// ExitGoStmt is called when production goStmt is exited.
+func (s *BaseGoSubsetListener) ExitGoStmt(ctx *GoStmtContext) {}
 
 // EnterExprList is called when production exprList is entered.
 func (s *BaseGoSubsetListener) EnterExprList(ctx *ExprListContext) {}

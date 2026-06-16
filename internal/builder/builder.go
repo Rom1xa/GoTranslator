@@ -49,21 +49,54 @@ func buildProgram(ctx gen.IProgramContext) *ast.Program {
 		if fd := tl.FuncDecl(); fd != nil {
 			p.Funcs = append(p.Funcs, buildFunc(fd))
 		} else if td := tl.TypeDecl(); td != nil {
-			p.Types = append(p.Types, buildTypeDecl(td))
+			st, it := buildTypeDecl(td)
+			if st != nil {
+				p.Types = append(p.Types, st)
+			}
+			if it != nil {
+				p.Interfaces = append(p.Interfaces, it)
+			}
 		}
 	}
 	return p
 }
 
-func buildTypeDecl(ctx gen.ITypeDeclContext) *ast.StructType {
-	st := &ast.StructType{Name: ctx.IDENT().GetText()}
-	for _, fd := range ctx.AllFieldDecl() {
-		st.Fields = append(st.Fields, ast.FieldDecl{
-			Name: fd.IDENT().GetText(),
-			Type: fd.Type_().GetText(),
-		})
+func buildTypeDecl(ctx gen.ITypeDeclContext) (*ast.StructType, *ast.InterfaceType) {
+	name := ctx.IDENT().GetText()
+	td := ctx.TypeDef()
+	if fields := td.AllFieldDecl(); len(fields) > 0 || strings.HasPrefix(td.GetText(), "struct") {
+		st := &ast.StructType{Name: name}
+		for _, fd := range fields {
+			st.Fields = append(st.Fields, ast.FieldDecl{
+				Name: fd.IDENT().GetText(),
+				Type: fd.Type_().GetText(),
+			})
+		}
+		return st, nil
 	}
-	return st
+	it := &ast.InterfaceType{Name: name}
+	for _, md := range td.AllMethodDecl() {
+		it.Methods = append(it.Methods, buildMethodDecl(md))
+	}
+	return nil, it
+}
+
+func buildMethodDecl(ctx gen.IMethodDeclContext) ast.MethodDecl {
+	m := ast.MethodDecl{Name: ctx.IDENT().GetText()}
+	if pl := ctx.ParamList(); pl != nil {
+		for _, p := range pl.AllParam() {
+			m.Params = append(m.Params, ast.Param{
+				Name: p.IDENT().GetText(),
+				Type: p.Type_().GetText(),
+			})
+		}
+	}
+	if rs := ctx.ReturnSpec(); rs != nil {
+		for _, t := range rs.AllType_() {
+			m.ReturnTypes = append(m.ReturnTypes, t.GetText())
+		}
+	}
+	return m
 }
 
 func buildFieldAssign(ctx gen.IFieldAssignStmtContext) ast.Stmt {
@@ -112,6 +145,8 @@ func buildStmt(ctx gen.IStatementContext) ast.Stmt {
 	switch {
 	case ctx.VarDecl() != nil:
 		return buildVarDecl(ctx.VarDecl())
+	case ctx.GoStmt() != nil:
+		return buildGoStmt(ctx.GoStmt())
 	case ctx.ShortVarDecl() != nil:
 		return buildShortVarDecl(ctx.ShortVarDecl())
 	case ctx.FieldAssignStmt() != nil:
@@ -141,6 +176,23 @@ func buildStmt(ctx gen.IStatementContext) ast.Stmt {
 	default:
 		panic("buildStmt: неизвестный оператор")
 	}
+}
+
+func buildGoStmt(ctx gen.IGoStmtContext) ast.Stmt {
+	gs := &ast.GoStmt{Line: ctx.GetStart().GetLine(), Col: ctx.GetStart().GetColumn()}
+	if ident := ctx.IDENT(); ident != nil {
+		gs.Name = ident.GetText()
+	} else if strings.HasPrefix(ctx.GetText(), "gofmt.Printf") {
+		gs.PrintFn = "Printf"
+	} else {
+		gs.PrintFn = "Println"
+	}
+	if list := ctx.ExprList(); list != nil {
+		for _, e := range list.AllExpr() {
+			gs.Args = append(gs.Args, buildExpr(e))
+		}
+	}
+	return gs
 }
 
 func buildBlock(ctx gen.IBlockContext) *ast.BlockStmt {
